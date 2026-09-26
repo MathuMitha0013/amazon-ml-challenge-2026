@@ -1,30 +1,44 @@
 """
-Exact normalized and compact name blocking route.
+Exact normalized-name blocking.
 
-Future Responsibility:
-- Generate high-precision candidate blocks where normalized or compact business names match exactly.
-- Provide deterministic O(1) hash table candidate lookups.
-- Form the foundational high-confidence candidate route.
+Generates candidate pairs when Source 1 and Source 2/3
+have the same normalized business name and country.
 """
 
 from typing import Any
-from pathlib import Path
 
 
 def generate_exact_blocks(
     source1_data: Any,
     source2_3_data: Any,
-    key_column: str = "normalized_name",
+    key_column: str = "name_normalized",
 ) -> Any:
     """
-    Performs exact key join between Source1 and Source2/3 records.
+    Generate exact normalized-name candidate pairs.
 
-    Args:
-        source1_data: Master Source1 table / DataFrame.
-        source2_3_data: Combined or individual noisy source table.
-        key_column: Exact key column name to join on.
+    Required columns:
+        Source 1:
+            s1_id
+            country
+            name_normalized
+
+        Source 2/3:
+            matched_id
+            country
+            name_normalized
 
     Returns:
-        DataFrame or relation of candidate pairs (source1_entity_id, candidate_entity_id).
+        DataFrame containing:
+            s1_id
+            matched_id
     """
-    raise NotImplementedError("generate_exact_blocks will be implemented in subsequent phases.")
+
+    # Pandas DataFrame implementation
+    candidates = source1_data.merge(
+        source2_3_data,
+        on=["country", key_column],
+        how="inner",
+        suffixes=("_s1", "_candidate"),
+    )
+
+    return candidates[["s1_id", "matched_id"]].drop_duplicates()
