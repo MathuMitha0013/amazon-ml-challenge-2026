@@ -1,0 +1,87 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Challenge Datasets (Never commit large raw data)
+dataset/
+student_resource/dataset/
+data/
+*.tsv
+*.csv
+*.parquet
+*.feather
+*.h5
+*.hdf5
+!output/.gitkeep
+
+# Output generated files (except .gitkeep)
+output/*.tsv
+output/*.csv
+output/*.parquet
+
+# Model artifacts & checkpoints (Keep repo lightweight)
+models_saved/
+checkpoints/
+*.pkl
+*.joblib
+*.model
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Cache & temporary directories
+.cache/
+cache/
+scratch/
+tmp/
+temp/
+*.log
+
+# Environment variables & secrets (Security)
+.env
+.env.*
+.aws/
+credentials
+secrets.json
+*.pem
+*.key
+
+# IDEs & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

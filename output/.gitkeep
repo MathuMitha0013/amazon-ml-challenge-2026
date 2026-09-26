@@ -1,0 +1,2 @@
+# Keep output directory in version control.
+# Generated submission files (matching_results.tsv, candidate_pairs.tsv) are ignored by .gitignore.
