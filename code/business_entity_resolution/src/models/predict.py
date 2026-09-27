@@ -294,11 +294,17 @@ def run_prediction(
     """
     repo_root = PROJECT_ROOT
     if model_path is None:
-        model_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "entity_matcher_lgbm.joblib"
+        model_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "4route_lgbm.joblib"
+        if not model_path.exists():
+            model_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "entity_matcher_lgbm.joblib"
     if config_path is None:
-        config_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "entity_matcher_threshold_config.json"
+        config_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "4route_threshold_config.json"
+        if not config_path.exists():
+            config_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "entity_matcher_threshold_config.json"
     if test_dir is None:
         test_dir = repo_root / "student_resource" / "dataset" / "test"
+        if not Path(test_dir).exists():
+            test_dir = repo_root / "student_resource" / "dataset" / "dataset" / "test"
     if output_dir is None:
         output_dir = repo_root / "output"
 

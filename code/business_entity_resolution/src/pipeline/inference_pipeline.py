@@ -77,31 +77,37 @@ def run_candidate_ranking_and_inference(
 
 def run_inference_pipeline(
     test_dir: str | Path = "dataset/test",
-    model_path: str | Path = "models_saved/lgbm_matcher.joblib",
+    model_path: str | Path = "code/business_entity_resolution/experiments/models/4route_lgbm.joblib",
     output_dir: str | Path = "output",
     config: Optional[dict[str, Any]] = None,
 ) -> tuple[Path, Path]:
     """
     CLI wrapper for end-to-end inference pipeline.
     """
-    raise NotImplementedError(
-        "Full dataset inference pipeline will be executed once Person 1 (data loader) "
-        "and Person 2 (candidate blocking) are connected."
-    )
+    from code.business_entity_resolution.src.models.predict import run_batch_inference
+    print(f"Executing inference pipeline on {test_dir}...", flush=True)
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    m_path = out_dir / "matching_results.tsv"
+    c_path = out_dir / "candidate_pairs.tsv"
+    if not m_path.exists() or not c_path.exists():
+        run_batch_inference(
+            model_path=str(model_path),
+            test_dir=str(test_dir),
+            output_dir=str(output_dir),
+        )
+    return m_path, c_path
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run Business Entity Resolution Inference Pipeline.")
     parser.add_argument("--test-dir", default="dataset/test", help="Path to test dataset folder.")
-    parser.add_argument("--model-path", default="models_saved/lgbm_matcher.joblib", help="Path to trained model.")
+    parser.add_argument("--model-path", default="code/business_entity_resolution/experiments/models/4route_lgbm.joblib", help="Path to trained model.")
     parser.add_argument("--output-dir", default="output", help="Path to output directory.")
     args = parser.parse_args()
 
     print("Running inference pipeline...")
-    try:
-        run_inference_pipeline(args.test_dir, args.model_path, args.output_dir)
-    except NotImplementedError as e:
-        print(f"Pipeline Notice: {e}")
+    run_inference_pipeline(args.test_dir, args.model_path, args.output_dir)
 
 
 if __name__ == "__main__":

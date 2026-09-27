@@ -48,6 +48,8 @@ from code.business_entity_resolution.src.blocking.candidate_generation import co
 def run_benchmark():
     base_dir = Path(__file__).resolve().parents[3]
     train_dir = base_dir / "student_resource" / "dataset" / "train"
+    if not train_dir.exists():
+        train_dir = base_dir / "student_resource" / "dataset" / "dataset" / "train"
     s1_path = (train_dir / "train_source1.tsv").as_posix()
     s2_path = (train_dir / "train_source2.tsv").as_posix()
     s3_path = (train_dir / "train_source3.tsv").as_posix()

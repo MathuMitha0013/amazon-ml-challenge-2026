@@ -11,13 +11,14 @@ def create_validation_split(data_path: str, output_dir: str, val_ratio: float = 
     df = pl.read_csv(data_path, separator="\t") if data_path.endswith(".tsv") else pl.read_csv(data_path)
     
     # Stratified entity split logic
-    entities = df["legal_entity_id"].unique().shuffle(seed=seed)
+    entity_col = "source1_entity_id" if "source1_entity_id" in df.columns else ("entity_id" if "entity_id" in df.columns else "legal_entity_id")
+    entities = df[entity_col].unique().shuffle(seed=seed)
     val_size = int(len(entities) * val_ratio)
     
     val_entities = set(entities[:val_size].to_list())
     
-    train_df = df.filter(~pl.col("legal_entity_id").is_in(val_entities))
-    val_df = df.filter(pl.col("legal_entity_id").is_in(val_entities))
+    train_df = df.filter(~pl.col(entity_col).is_in(val_entities))
+    val_df = df.filter(pl.col(entity_col).is_in(val_entities))
     
     train_path = os.path.join(output_dir, "train_split_gt.tsv")
     val_path = os.path.join(output_dir, "val_split_gt.tsv")

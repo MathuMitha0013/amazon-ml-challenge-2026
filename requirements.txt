@@ -11,6 +11,7 @@ scipy>=1.12.0,<1.15.0
 
 # High-Performance String Processing & Fuzzy Matching
 rapidfuzz>=3.9.0
+Unidecode>=1.3.0
 
 # Machine Learning & Tabular Models
 lightgbm>=4.3.0,<=4.5.0

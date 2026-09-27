@@ -16,6 +16,7 @@ import time
 import re
 import unicodedata
 from pathlib import Path
+from collections import defaultdict
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -114,6 +115,8 @@ def generate_token_blocks_p2(source1_data: pd.DataFrame, source2_3_data: pd.Data
 def run_baseline_training():
     base_dir = Path(__file__).resolve().parents[3]
     train_dir = base_dir / "student_resource" / "dataset" / "train"
+    if not train_dir.exists():
+        train_dir = base_dir / "student_resource" / "dataset" / "dataset" / "train"
     s1_path = (train_dir / "train_source1.tsv").as_posix()
     s2_path = (train_dir / "train_source2.tsv").as_posix()
     s3_path = (train_dir / "train_source3.tsv").as_posix()
@@ -151,7 +154,7 @@ def run_baseline_training():
     for _, row in gt_df_raw.iterrows():
         s1 = str(row["source1_entity_id"]).strip()
         m_str = row.get("matched_entity_ids")
-        if pd.isna(m_str) or not str(m_str).strip() or str(m_str).lower() == "null":
+        if pd.isna(m_str) or not str(m_str).strip() or str(m_str).lower() in ("null", "nan"):
             gt_map[s1] = set()
             singleton_count += 1
         else:
@@ -226,9 +229,9 @@ def run_baseline_training():
     print(f"Generated {len(person2_candidates):,} unique candidate pairs in {gen_time:.2f}s")
 
     # Step 2b: Measure candidate recall before ML
-    union_cand_map = {}
-    for _, r in person2_candidates.iterrows():
-        union_cand_map.setdefault(r["s1_id"], set()).add(r["matched_id"])
+    union_cand_map = defaultdict(set)
+    for sid, mid in zip(person2_candidates["s1_id"].values, person2_candidates["matched_id"].values):
+        union_cand_map[sid].add(mid)
 
     captured_true_links = sum(len(v & union_cand_map.get(k, set())) for k, v in gt_map.items())
     cand_recall_pct = (captured_true_links / total_true_links * 100) if total_true_links > 0 else 100.0

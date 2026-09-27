@@ -368,6 +368,8 @@ def _run_full_training_pipeline() -> None:
     # ------------------------------------------------------------------ paths
     base_dir = Path(__file__).resolve().parents[4]
     train_dir = base_dir / "student_resource" / "dataset" / "train"
+    if not train_dir.exists():
+        train_dir = base_dir / "student_resource" / "dataset" / "dataset" / "train"
     s1_path = (train_dir / "train_source1.tsv").as_posix()
     s2_path = (train_dir / "train_source2.tsv").as_posix()
     s3_path = (train_dir / "train_source3.tsv").as_posix()

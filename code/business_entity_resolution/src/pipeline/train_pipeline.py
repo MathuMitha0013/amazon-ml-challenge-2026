@@ -124,11 +124,13 @@ def run_training_pipeline(
     """
     CLI wrapper for end-to-end training pipeline.
     """
-    print(f"Training pipeline: reading datasets from {train_dir}...")
-    raise NotImplementedError(
-        "Full dataset training pipeline will be executed once Person 1 (data loader) "
-        "and Person 2 (candidate blocking) are connected."
-    )
+    from code.business_entity_resolution.experiments.train_4route_model import run_4route_training
+    print(f"Executing training pipeline on {train_dir}...", flush=True)
+    run_4route_training()
+    return {
+        "status": "success",
+        "output_model_dir": str(output_model_dir),
+    }
 
 
 def main():
@@ -138,10 +140,7 @@ def main():
     args = parser.parse_args()
 
     print("Running training pipeline...")
-    try:
-        run_training_pipeline(args.train_dir, args.output_model_dir)
-    except NotImplementedError as e:
-        print(f"Pipeline Notice: {e}")
+    run_training_pipeline(args.train_dir, args.output_model_dir)
 
 
 if __name__ == "__main__":
