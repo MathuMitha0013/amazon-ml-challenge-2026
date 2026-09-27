@@ -293,19 +293,38 @@ def extract_pair_features(
     n = df.height
     feat_arrays = {col: np.zeros(n, dtype=np.float32) for col in FEATURE_COLUMNS}
 
-    for i in range(n):
-        feats = extract_single_pair_features(
-            s1_name=s1_names[i],
-            c_name=c_names[i],
-            s1_addr=s1_addrs[i],
-            c_addr=c_addrs[i],
-            s1_country=s1_countries[i],
-            c_country=c_countries[i],
-            candidate_id=c_ids[i],
-            num_blocks_hit=hit_counts[i],
-        )
-        for col, val in feats.items():
-            feat_arrays[col][i] = val
+    def _process_chunk(chunk_range: tuple[int, int]) -> tuple[int, int, dict[str, np.ndarray]]:
+        start, end = chunk_range
+        chunk_size = end - start
+        chunk_arrays = {col: np.zeros(chunk_size, dtype=np.float32) for col in FEATURE_COLUMNS}
+        for idx, i in enumerate(range(start, end)):
+            feats = extract_single_pair_features(
+                s1_name=s1_names[i],
+                c_name=c_names[i],
+                s1_addr=s1_addrs[i],
+                c_addr=c_addrs[i],
+                s1_country=s1_countries[i],
+                c_country=c_countries[i],
+                candidate_id=c_ids[i],
+                num_blocks_hit=hit_counts[i],
+            )
+            for col, val in feats.items():
+                chunk_arrays[col][idx] = val
+        return start, end, chunk_arrays
+
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    chunk_len = 25_000
+    chunks = [(i, min(i + chunk_len, n)) for i in range(0, n, chunk_len)]
+    max_workers = max(1, (os.cpu_count() or 4))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = executor.map(_process_chunk, chunks)
+
+    for start, end, chunk_arrays in results:
+        for col in FEATURE_COLUMNS:
+            feat_arrays[col][start:end] = chunk_arrays[col]
 
     feature_series = [pl.Series(col, feat_arrays[col]) for col in FEATURE_COLUMNS]
     return df.with_columns(feature_series)

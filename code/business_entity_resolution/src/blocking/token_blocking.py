@@ -1,5 +1,5 @@
 """
-Rare-token inverted-index blocking.
+Rare-token and inverted index blocking route.
 
 Responsibilities:
 - Build an inverted index over rare and discriminative business name tokens.

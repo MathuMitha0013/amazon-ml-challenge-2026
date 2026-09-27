@@ -13,42 +13,6 @@ import unicodedata
 from typing import Any
 from unidecode import unidecode
 
-from unidecode import unidecode
-
-
-# Common address abbreviations.
-# These are generic and not country-specific.
-ADDRESS_ABBREVIATIONS = {
-    "street": "st",
-    "st.": "st",
-    "road": "rd",
-    "rd.": "rd",
-    "avenue": "ave",
-    "ave.": "ave",
-    "boulevard": "blvd",
-    "blvd.": "blvd",
-    "drive": "dr",
-    "dr.": "dr",
-    "lane": "ln",
-    "ln.": "ln",
-    "court": "ct",
-    "ct.": "ct",
-    "parkway": "pkwy",
-    "pkwy.": "pkwy",
-    "highway": "hwy",
-    "hwy.": "hwy",
-    "place": "pl",
-    "pl.": "pl",
-    "suite": "ste",
-    "ste.": "ste",
-    "floor": "fl",
-    "fl.": "fl",
-    "apartment": "apt",
-    "apt.": "apt",
-    "building": "bldg",
-    "bldg.": "bldg",
-}
-
 
 def normalize_business_address(raw_address: str) -> str:
     """
@@ -57,14 +21,8 @@ def normalize_business_address(raw_address: str) -> str:
     Args:
         raw_address: Raw address text.
 
-    The normalization:
-    - handles Unicode characters
-    - transliterates non-Latin scripts
-    - lowercases text
-    - standardizes common address terms
-    - preserves numbers
-    - removes punctuation
-    - normalizes whitespace
+    Returns:
+        Cleaned, normalized address string.
     """
     if raw_address is None:
         return ""
@@ -100,27 +58,7 @@ def extract_address_components(raw_address: str) -> dict[str, Any]:
         raw_address: Raw address string.
 
     Returns:
-        raw:
-            Original address.
-
-        normalized:
-            Normalized address.
-
-        numbers:
-            Unique numeric components.
-
-        postal_codes:
-            Numeric components that look like postal/ZIP codes.
-
-        street_numbers:
-            Numeric components that appear as standalone
-            building/street numbers.
-
-        locality_tokens:
-            Non-numeric address tokens.
-
-        street_tokens:
-            Tokens associated with common street/address terms.
+        Dictionary containing extracted components.
     """
     norm = normalize_business_address(raw_address)
     tokens = norm.split()

@@ -1,5 +1,5 @@
 """
-Address-based blocking route.
+Address-based blocking route using geographic localities and numeric components.
 
 Responsibilities:
 - Extract address tokens (distinctive locality names, street tokens, postal codes, and numbers).
@@ -8,8 +8,6 @@ Responsibilities:
 """
 
 from collections import defaultdict
-import pandas as pd
-
 import pandas as pd
 
 

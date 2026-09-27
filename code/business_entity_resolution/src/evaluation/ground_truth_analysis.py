@@ -14,8 +14,6 @@ import polars as pl
 
 from .evaluate import _parse_mapping
 
-    # Load Ground Truth
-    gt_df = pl.read_csv(gt_path, separator="\t")
 
 def analyze_ground_truth(
     ground_truth: Union[Mapping[str, set[str]], pl.DataFrame, str, Path],

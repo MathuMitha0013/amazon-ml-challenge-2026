@@ -1,5 +1,5 @@
 """
-Exact normalized-name blocking.
+Exact normalized and compact name blocking route.
 
 Responsibilities:
 - Generate high-precision candidate blocks where normalized business names match exactly within country.

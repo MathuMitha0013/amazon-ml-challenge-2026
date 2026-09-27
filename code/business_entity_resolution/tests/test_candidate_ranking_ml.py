@@ -14,32 +14,39 @@ Tests cover:
 - Threshold tuning and entity-level Macro F0.5 evaluation
 """
 
-import tempfile
+import sys
 from pathlib import Path
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import pytest
 import numpy as np
 import polars as pl
 
-from src.ranking.candidate_ranker import CandidateRanker, rank_candidates
-from src.features.pair_features import (
+from code.business_entity_resolution.src.ranking.candidate_ranker import CandidateRanker, rank_candidates
+from code.business_entity_resolution.src.features.pair_features import (
     FEATURE_COLUMNS,
     extract_single_pair_features,
     extract_pair_features,
 )
-from src.models.train_model import (
+from code.business_entity_resolution.src.models.train_model import (
     EntityMatcherModel,
     train_matching_model,
     split_entity_disjoint,
 )
-from src.models.predict import predict_matches_batch, format_matching_results
-from src.evaluation.evaluate import (
+from code.business_entity_resolution.src.models.predict import predict_matches_batch, format_matching_results
+from code.business_entity_resolution.src.evaluation.evaluate import (
     compute_single_entity_metrics,
     evaluate_predictions,
     compute_candidate_statistics,
 )
-from src.evaluation.threshold_tuning import tune_f05_threshold
-from src.evaluation.candidate_recall import evaluate_candidate_recall
-from src.evaluation.ground_truth_analysis import analyze_ground_truth
+from code.business_entity_resolution.src.evaluation.threshold_tuning import tune_f05_threshold
+from code.business_entity_resolution.src.evaluation.candidate_recall import evaluate_candidate_recall
+from code.business_entity_resolution.src.evaluation.ground_truth_analysis import analyze_ground_truth
 
 
 @pytest.fixture
@@ -374,8 +381,9 @@ def test_candidate_recall_and_gt_analysis():
 
 def test_end_to_end_synthetic_pipeline(synthetic_records_dataset):
     """Test full training + candidate ranking + inference + output TSV generation on synthetic data."""
-    from src.pipeline.train_pipeline import train_and_calibrate_pipeline
-    from src.pipeline.inference_pipeline import run_candidate_ranking_and_inference
+    import tempfile
+    from code.business_entity_resolution.src.pipeline.train_pipeline import train_and_calibrate_pipeline
+    from code.business_entity_resolution.src.pipeline.inference_pipeline import run_candidate_ranking_and_inference
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
@@ -429,7 +437,7 @@ def test_end_to_end_synthetic_pipeline(synthetic_records_dataset):
 
 def test_person2_adapter_hydration_and_labeling():
     """Test adapting Person 2 candidate output schema (s1_id, matched_id, block_type), hydrating attributes, and labeling."""
-    from src.features.pair_features import (
+    from code.business_entity_resolution.src.features.pair_features import (
         standardize_candidate_schema,
         hydrate_candidate_pairs,
         construct_training_candidates,

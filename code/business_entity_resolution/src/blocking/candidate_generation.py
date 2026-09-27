@@ -1,5 +1,5 @@
 """
-Multi-route candidate generation.
+Multi-route blocking union and high-recall candidate pool generator.
 
 Responsibilities:
 - Combine candidate pairs across all blocking routes (Exact, Token, Address, N-Gram).
@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Optional, Union
 import pandas as pd
 
-from src.blocking.exact_blocking import generate_exact_blocks
-from src.blocking.token_blocking import generate_token_blocks
-from src.blocking.address_blocking import generate_address_blocks
-from src.blocking.ngram_blocking import generate_ngram_blocks
+from .exact_blocking import generate_exact_blocks
+from .token_blocking import generate_token_blocks
+from .address_blocking import generate_address_blocks
+from .ngram_blocking import generate_ngram_blocks
 
 
 def combine_candidate_routes(
@@ -101,7 +101,7 @@ def generate_candidate_pairs(
     routes: Optional[list[str]] = None,
 ) -> pd.DataFrame:
     """
-    Generate candidate pairs across Source 2 and Source 3.
+    Executes all configured blocking routes and merges candidate pools via UNION.
 
     Args:
         source1_path: Path or DataFrame of Source1 dataset.
@@ -110,14 +110,7 @@ def generate_candidate_pairs(
         routes: List of active routes to run (default: ['exact', 'token', 'address', 'ngram']).
 
     Returns:
-        DataFrame with:
-            s1_id
-            matched_id
-            block_type
-            number_of_blocks_hit
-
-    Notes:
-        Address and n-gram routes are intentionally not enabled yet.
+        Deduplicated candidate pair table with route hit counts.
     """
     if isinstance(source1_path, (str, Path)):
         s1_df = pd.read_csv(source1_path, sep="\t")
