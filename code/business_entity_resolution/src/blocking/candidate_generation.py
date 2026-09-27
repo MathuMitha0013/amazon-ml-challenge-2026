@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Optional, Union
 import pandas as pd
 
-from src.blocking.exact_blocking import generate_exact_blocks
-from src.blocking.token_blocking import generate_token_blocks
-from src.blocking.address_blocking import generate_address_blocks
-from src.blocking.ngram_blocking import generate_ngram_blocks
+from .exact_blocking import generate_exact_blocks
+from .token_blocking import generate_token_blocks
+from .address_blocking import generate_address_blocks
+from .ngram_blocking import generate_ngram_blocks
 
 
 def combine_candidate_routes(

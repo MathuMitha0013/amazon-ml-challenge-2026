@@ -18,33 +18,34 @@ import tracemalloc
 from pathlib import Path
 from collections import defaultdict
 
-# Ensure package root is in sys.path
-pkg_root = Path(__file__).resolve().parents[1]
-if str(pkg_root) not in sys.path:
-    sys.path.insert(0, str(pkg_root))
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import duckdb
 import numpy as np
 import pandas as pd
 import polars as pl
 
-from src.preprocessing.normalize_name import normalize_business_name
-from src.preprocessing.normalize_address import normalize_business_address
-from src.blocking.exact_blocking import generate_exact_blocks
-from src.blocking.token_blocking import generate_token_blocks
-from src.blocking.address_blocking import generate_address_blocks
-from src.blocking.ngram_blocking import generate_ngram_blocks
-from src.blocking.candidate_generation import combine_candidate_routes
-from src.features.pair_features import (
+from code.business_entity_resolution.src.preprocessing.normalize_name import normalize_business_name
+from code.business_entity_resolution.src.preprocessing.normalize_address import normalize_business_address
+from code.business_entity_resolution.src.blocking.exact_blocking import generate_exact_blocks
+from code.business_entity_resolution.src.blocking.token_blocking import generate_token_blocks
+from code.business_entity_resolution.src.blocking.address_blocking import generate_address_blocks
+from code.business_entity_resolution.src.blocking.ngram_blocking import generate_ngram_blocks
+from code.business_entity_resolution.src.blocking.candidate_generation import combine_candidate_routes
+from code.business_entity_resolution.src.features.pair_features import (
     FEATURE_COLUMNS,
     standardize_candidate_schema,
     hydrate_candidate_pairs,
     construct_training_candidates,
     extract_pair_features,
 )
-from src.models.train_model import EntityMatcherModel, split_entity_disjoint
-from src.evaluation.threshold_tuning import tune_f05_threshold
-from src.evaluation.evaluate import evaluate_predictions, compute_candidate_statistics
+from code.business_entity_resolution.src.models.train_model import EntityMatcherModel, split_entity_disjoint
+from code.business_entity_resolution.src.evaluation.threshold_tuning import tune_f05_threshold
+from code.business_entity_resolution.src.evaluation.evaluate import evaluate_predictions, compute_candidate_statistics
 
 
 def run_4route_training():

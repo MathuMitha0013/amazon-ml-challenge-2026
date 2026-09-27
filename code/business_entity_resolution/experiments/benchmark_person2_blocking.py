@@ -31,15 +31,18 @@ import numpy as np
 import pandas as pd
 
 # Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.preprocessing.normalize_name import normalize_business_name
-from src.preprocessing.normalize_address import normalize_business_address
-from src.blocking.exact_blocking import generate_exact_blocks
-from src.blocking.token_blocking import generate_token_blocks
-from src.blocking.address_blocking import generate_address_blocks
-from src.blocking.ngram_blocking import generate_ngram_blocks
-from src.blocking.candidate_generation import combine_candidate_routes
+from code.business_entity_resolution.src.preprocessing.normalize_name import normalize_business_name
+from code.business_entity_resolution.src.preprocessing.normalize_address import normalize_business_address
+from code.business_entity_resolution.src.blocking.exact_blocking import generate_exact_blocks
+from code.business_entity_resolution.src.blocking.token_blocking import generate_token_blocks
+from code.business_entity_resolution.src.blocking.address_blocking import generate_address_blocks
+from code.business_entity_resolution.src.blocking.ngram_blocking import generate_ngram_blocks
+from code.business_entity_resolution.src.blocking.candidate_generation import combine_candidate_routes
 
 
 def run_benchmark():

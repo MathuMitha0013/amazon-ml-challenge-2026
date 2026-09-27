@@ -17,10 +17,11 @@ import re
 import unicodedata
 from pathlib import Path
 
-# Ensure code/business_entity_resolution root is in sys.path
-pkg_root = Path(__file__).resolve().parents[1]
-if str(pkg_root) not in sys.path:
-    sys.path.insert(0, str(pkg_root))
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import duckdb
 import numpy as np
@@ -28,17 +29,17 @@ import pandas as pd
 import polars as pl
 from unidecode import unidecode
 
-from src.features.pair_features import (
+from code.business_entity_resolution.src.features.pair_features import (
     FEATURE_COLUMNS,
     standardize_candidate_schema,
     hydrate_candidate_pairs,
     construct_training_candidates,
     extract_pair_features,
 )
-from src.models.train_model import EntityMatcherModel, split_entity_disjoint
-from src.evaluation.threshold_tuning import tune_f05_threshold
-from src.evaluation.evaluate import evaluate_predictions, compute_candidate_statistics
-from src.evaluation.candidate_recall import evaluate_candidate_recall
+from code.business_entity_resolution.src.models.train_model import EntityMatcherModel, split_entity_disjoint
+from code.business_entity_resolution.src.evaluation.threshold_tuning import tune_f05_threshold
+from code.business_entity_resolution.src.evaluation.evaluate import evaluate_predictions, compute_candidate_statistics
+from code.business_entity_resolution.src.evaluation.candidate_recall import evaluate_candidate_recall
 
 
 # --- Person 2's Normalization & Blocking Functions ---
