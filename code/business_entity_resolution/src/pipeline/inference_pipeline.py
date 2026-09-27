@@ -9,14 +9,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
 import polars as pl
 
-from ..ranking.candidate_ranker import CandidateRanker
-from ..features.pair_features import extract_batch_features
-from ..models.train_model import EntityMatcherModel
-from ..models.predict import predict_matches_batch, format_matching_results
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from code.business_entity_resolution.src.ranking.candidate_ranker import CandidateRanker
+from code.business_entity_resolution.src.features.pair_features import extract_batch_features
+from code.business_entity_resolution.src.models.train_model import EntityMatcherModel
+from code.business_entity_resolution.src.models.predict import (
+    predict_matches_batch,
+    format_matching_results,
+    run_prediction,
+)
 
 
 def run_candidate_ranking_and_inference(
@@ -76,38 +86,45 @@ def run_candidate_ranking_and_inference(
 
 
 def run_inference_pipeline(
-    test_dir: str | Path = "dataset/test",
+    test_dir: str | Path = "student_resource/dataset/dataset/test",
     model_path: str | Path = "code/business_entity_resolution/experiments/models/4route_lgbm.joblib",
     output_dir: str | Path = "output",
+    threshold: float = 0.65,
     config: Optional[dict[str, Any]] = None,
 ) -> tuple[Path, Path]:
     """
     CLI wrapper for end-to-end inference pipeline.
     """
-    from code.business_entity_resolution.src.models.predict import run_batch_inference
-    print(f"Executing inference pipeline on {test_dir}...", flush=True)
+    print(f"Executing inference pipeline on {test_dir} with threshold {threshold}...", flush=True)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     m_path = out_dir / "matching_results.tsv"
     c_path = out_dir / "candidate_pairs.tsv"
-    if not m_path.exists() or not c_path.exists():
-        run_batch_inference(
-            model_path=str(model_path),
-            test_dir=str(test_dir),
-            output_dir=str(output_dir),
-        )
+
+    run_prediction(
+        model_path=str(model_path),
+        test_dir=str(test_dir),
+        output_dir=str(output_dir),
+        threshold=threshold,
+    )
     return m_path, c_path
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run Business Entity Resolution Inference Pipeline.")
-    parser.add_argument("--test-dir", default="dataset/test", help="Path to test dataset folder.")
+    parser.add_argument("--test-dir", default="student_resource/dataset/dataset/test", help="Path to test dataset folder.")
     parser.add_argument("--model-path", default="code/business_entity_resolution/experiments/models/4route_lgbm.joblib", help="Path to trained model.")
     parser.add_argument("--output-dir", default="output", help="Path to output directory.")
+    parser.add_argument("--threshold", type=float, default=0.65, help="Decision probability threshold.")
     args = parser.parse_args()
 
-    print("Running inference pipeline...")
-    run_inference_pipeline(args.test_dir, args.model_path, args.output_dir)
+    print(f"Running inference pipeline (threshold={args.threshold})...")
+    run_inference_pipeline(
+        test_dir=args.test_dir,
+        model_path=args.model_path,
+        output_dir=args.output_dir,
+        threshold=args.threshold,
+    )
 
 
 if __name__ == "__main__":

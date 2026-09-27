@@ -38,7 +38,15 @@ def _tokenize_simple(text: Optional[str]) -> set[str]:
     return set(re.findall(r"\w+", text.lower()))
 
 
-from ..features.pair_features import standardize_candidate_schema, hydrate_candidate_pairs
+import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from code.business_entity_resolution.src.features.pair_features import standardize_candidate_schema, hydrate_candidate_pairs
 
 
 class CandidateRanker:
