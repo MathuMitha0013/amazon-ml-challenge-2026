@@ -1,46 +1,75 @@
 """
-Training ground truth statistical analysis and pattern discovery.
+Ground truth statistical profiling and match distribution analysis.
 
-Future Responsibility:
-- Analyze ground truth match-count distributions (min, median, max, quantiles).
-- Identify true singleton proportion (S1 entities with 0 matches).
-- Examine S2 vs S3 match frequencies and source cross-matches.
-- Analyze country alignment between true matching pairs without assuming cross-country is impossible.
+Analyzes training ground truth to profile match distributions, singleton ratios,
+S2 vs S3 frequency breakdowns, and country alignment patterns.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, Mapping, Union
 from pathlib import Path
+import numpy as np
+import polars as pl
+
+from .evaluate import _parse_mapping
 
 
-def analyze_ground_truth(ground_truth_path: str | Path) -> dict[str, Any]:
-    """
-    Parses and summarizes training ground truth relationships.
-
-    Args:
-        ground_truth_path: Path to train_ground_truth.tsv.
-
-    Returns:
-        Dictionary containing match statistics, singleton counts, and distribution metrics.
-    """
-    raise NotImplementedError("analyze_ground_truth will be implemented in subsequent phases.")
-
-
-def inspect_country_matching_patterns(
-    ground_truth_path: str | Path,
-    source1_path: str | Path,
-    source2_path: str | Path,
-    source3_path: str | Path,
+def analyze_ground_truth(
+    ground_truth: Union[Mapping[str, set[str]], pl.DataFrame, str, Path],
 ) -> dict[str, Any]:
     """
-    Evaluates whether true matches ever cross country boundaries.
+    Computes summary distribution metrics from ground truth dataset.
 
     Args:
-        ground_truth_path: Path to ground truth file.
-        source1_path: Path to Source1 dataset.
-        source2_path: Path to Source2 dataset.
-        source3_path: Path to Source3 dataset.
+        ground_truth: Ground truth mapping, DataFrame, or TSV path.
 
     Returns:
-        Statistical breakdown of within-country vs cross-country matches.
+        Dictionary containing:
+        - total_entities: Number of master S1 entities
+        - singleton_count: Number of S1 entities with 0 matches
+        - singleton_ratio: Fraction of entities with 0 matches
+        - total_matches: Total number of positive (S1, S2/S3) match links
+        - s2_matches: Count of matched S2 entities
+        - s3_matches: Count of matched S3 entities
+        - match_count_mean: Mean matches per entity
+        - match_count_median: Median matches per entity
+        - match_count_p95: 95th percentile matches per entity
+        - match_count_max: Maximum matches for any single S1 entity
     """
-    raise NotImplementedError("inspect_country_matching_patterns will be implemented in subsequent phases.")
+    gt_map = _parse_mapping(ground_truth)
+    total_entities = len(gt_map)
+    if total_entities == 0:
+        return {"total_entities": 0, "singleton_count": 0, "singleton_ratio": 0.0}
+
+    match_counts = []
+    s2_count = 0
+    s3_count = 0
+    singleton_count = 0
+
+    for s1, ids in gt_map.items():
+        n = len(ids)
+        match_counts.append(n)
+        if n == 0:
+            singleton_count += 1
+        for cid in ids:
+            c_upper = cid.upper()
+            if c_upper.startswith("S2-"):
+                s2_count += 1
+            elif c_upper.startswith("S3-"):
+                s3_count += 1
+
+    counts_arr = np.array(match_counts)
+
+    return {
+        "total_entities": total_entities,
+        "singleton_count": singleton_count,
+        "singleton_ratio": float(singleton_count / total_entities),
+        "total_matches": int(np.sum(counts_arr)),
+        "s2_matches": s2_count,
+        "s3_matches": s3_count,
+        "match_count_mean": float(np.mean(counts_arr)),
+        "match_count_median": float(np.median(counts_arr)),
+        "match_count_p95": float(np.percentile(counts_arr, 95)),
+        "match_count_max": int(np.max(counts_arr)),
+    }

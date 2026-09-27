@@ -1,14 +1,17 @@
 """
 Business name normalization and multi-representation generator.
 
-Future Responsibility:
-- Preserve raw names while constructing normalized, compact, and tokenized variants.
-- Standardize legal suffixes (e.g., Ltd, Corp, LLC, Inc, Private Limited, GmbH, SA).
-- Handle symbol substitutions ('&' vs 'and'), whitespace stripping, and sorted token signatures.
-- Guard against over-normalization to avoid precision loss and false merges.
+Responsibilities:
+- Standardize legal suffixes (e.g., Ltd, Corp, LLC, Inc, PLLC, PC, etc.).
+- Convert symbols ('&' to 'and').
+- Strip punctuation, unidecode accents, convert to lowercase.
+- Generate multiple representations (raw, normalized, compact, tokens, ngrams).
 """
 
+import re
+import unicodedata
 from typing import Any
+from unidecode import unidecode
 
 
 def normalize_business_name(raw_name: str) -> str:
@@ -21,7 +24,23 @@ def normalize_business_name(raw_name: str) -> str:
     Returns:
         Normalized business name string.
     """
-    raise NotImplementedError("normalize_business_name will be implemented in subsequent phases.")
+    if raw_name is None:
+        return ""
+    name = str(raw_name).strip()
+    if not name:
+        return ""
+    name = unicodedata.normalize("NFKD", name)
+    name = unidecode(name)
+    name = name.lower()
+    name = re.sub(r"\bl\s*\.?\s*l\s*\.?\s*c\.?\b", "llc", name)
+    name = re.sub(r"\bp\s*\.?\s*l\s*\.?\s*l\s*\.?\s*c\.?\b", "pllc", name)
+    name = re.sub(r"\bi\s*\.?\s*n\s*\.?\s*c\.?\b", "inc", name)
+    name = re.sub(r"\bl\s*\.?\s*t\s*\.?\s*d\.?\b", "ltd", name)
+    name = re.sub(r"\bp\s*\.?\s*c\.?\b", "pc", name)
+    name = name.replace("&", " and ")
+    name = re.sub(r"[^a-z0-9\s]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
 
 
 def generate_name_representations(raw_name: str) -> dict[str, Any]:
@@ -39,4 +58,22 @@ def generate_name_representations(raw_name: str) -> dict[str, Any]:
     Returns:
         Dictionary mapping representation keys to generated variants.
     """
-    raise NotImplementedError("generate_name_representations will be implemented in subsequent phases.")
+    norm = normalize_business_name(raw_name)
+    tokens = [t for t in norm.split() if t]
+    sorted_tokens = " ".join(sorted(tokens))
+    compact = re.sub(r"\s+", "", norm)
+
+    ngrams = set()
+    for t in tokens:
+        if len(t) >= 3:
+            for i in range(len(t) - 2):
+                ngrams.add(t[i : i + 3])
+
+    return {
+        "raw": raw_name or "",
+        "normalized": norm,
+        "compact": compact,
+        "sorted_tokens": sorted_tokens,
+        "tokens": tokens,
+        "ngrams": list(ngrams),
+    }
