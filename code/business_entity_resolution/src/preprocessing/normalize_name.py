@@ -13,16 +13,31 @@ import unicodedata
 from typing import Any
 from unidecode import unidecode
 
+from unidecode import unidecode
+
+
+LEGAL_SUFFIXES = [
+    "private limited",
+    "incorporated",
+    "corporation",
+    "company",
+    "limited",
+    "llc",
+    "ltd",
+    "inc",
+    "corp",
+    "co",
+    "pc",
+    "plc",
+    "pllc",
+]
+
 
 def normalize_business_name(raw_name: str) -> str:
     """
-    Standardizes a business name string while retaining core discriminative tokens.
+    Normalize a business name while preserving useful discriminative tokens.
 
-    Args:
-        raw_name: Raw business name text.
-
-    Returns:
-        Normalized business name string.
+    The legal suffix is retained in the normalized representation.
     """
     if raw_name is None:
         return ""
@@ -45,18 +60,29 @@ def normalize_business_name(raw_name: str) -> str:
 
 def generate_name_representations(raw_name: str) -> dict[str, Any]:
     """
-    Generates multiple concurrent representations for downstream blocking and matching:
-    - raw: original string
-    - normalized: lowercased, cleaned legal suffixes
-    - compact: alphanumeric only, no whitespace
-    - sorted_tokens: alphabetically sorted distinctive tokens
-    - ngrams: character 3-gram signatures
-
-    Args:
-        raw_name: Raw business name.
+    Generate multiple representations of a business name.
 
     Returns:
-        Dictionary mapping representation keys to generated variants.
+        raw:
+            Original input.
+
+        normalized:
+            Cleaned normalized name with legal suffix retained.
+
+        core:
+            Normalized name with one trailing legal suffix removed.
+
+        compact:
+            Alphanumeric normalized representation without spaces.
+
+        sorted_tokens:
+            Alphabetically sorted normalized tokens.
+
+        tokens:
+            Individual normalized tokens.
+
+        ngrams:
+            Character 3-gram signatures.
     """
     norm = normalize_business_name(raw_name)
     tokens = [t for t in norm.split() if t]
