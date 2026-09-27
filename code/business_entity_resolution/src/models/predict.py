@@ -1,9 +1,12 @@
 """
-Batch inference, prediction scoring, threshold gating, and submission formatting.
+Official Test Set Inference, Candidate Generation, Threshold Gating, and Submission Formatting.
 
 Loads trained EntityMatcherModel artifact and optimal threshold config,
-applies decision rule (score >= threshold -> MATCH, score < threshold -> NON-MATCH),
-prints evaluation & match metrics to console, and exports format-compliant predictions to output/matching_results.tsv.
+runs inference over the official test dataset (student_resource/dataset/test/),
+scores candidate pairs (score >= threshold -> MATCH, score < threshold -> NON-MATCH),
+and exports 100% submission-validated outputs:
+  - output/matching_results.tsv (header: source1_entity_id, matched_entity_ids)
+  - output/candidate_pairs.tsv  (header: source1_entity_id, candidate_entity_ids)
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Optional, Sequence, Union
+import duckdb
 import polars as pl
 import pandas as pd
 import numpy as np
@@ -25,6 +29,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from code.business_entity_resolution.src.models.train_model import EntityMatcherModel
+from code.business_entity_resolution.src.preprocessing.normalize_name import normalize_business_name
+from code.business_entity_resolution.src.preprocessing.normalize_address import normalize_business_address
+from code.business_entity_resolution.src.features.pair_features import (
+    standardize_candidate_schema,
+    hydrate_candidate_pairs,
+    extract_pair_features,
+)
 
 
 def predict_matches_batch(
@@ -60,7 +71,6 @@ def predict_matches_batch(
             }
         )
 
-    # Compute probabilities in batches to control memory footprint
     probs_list = []
     for offset in range(0, candidate_df.height, batch_size):
         chunk = candidate_df.slice(offset, batch_size)
@@ -68,7 +78,6 @@ def predict_matches_batch(
         probs_list.append(chunk_probs)
 
     all_probs = np.concatenate(probs_list) if probs_list else np.array([], dtype=np.float32)
-
     scored_df = candidate_df.with_columns(pl.Series("match_probability", all_probs))
 
     # Apply decision rule: score >= threshold -> MATCH, score < threshold -> NON-MATCH
@@ -89,22 +98,10 @@ def format_matching_results(
     Constructs the official matching_results.tsv DataFrame.
 
     Rules enforced:
-    - Exactly 2 columns: source1_entity_id, matched_entity_ids
+    - Exactly 2 columns: source1_entity_id, matched_entity_ids (tab-separated).
     - Every S1 entity in `all_s1_ids` appears exactly once.
-    - matched_entity_ids is comma-separated S2/S3 IDs, or empty string for singletons (0 matches).
-    - Tab-separated output format when exported to file.
-
-    Args:
-        accepted_matches: DataFrame of accepted MATCH pairs.
-        all_s1_ids: Full collection of test Source1 entity IDs.
-        output_path: Optional file path to write matching_results.tsv.
-        s1_id_col: Name of S1 ID column.
-        candidate_id_col: Name of matched candidate ID column.
-
-    Returns:
-        Polars DataFrame formatted according to competition rules.
+    - matched_entity_ids is comma-separated S2/S3 IDs, or blank string (no quotes) for singletons.
     """
-    # Group accepted MATCHes per S1 ID
     if accepted_matches.height > 0:
         grouped = (
             accepted_matches.group_by(s1_id_col, maintain_order=True)
@@ -124,184 +121,254 @@ def format_matching_results(
             }
         )
 
-    # Join with master S1 ID list to ensure every S1 entity exists
-    s1_list = sorted(list(all_s1_ids)) if all_s1_ids else []
+    s1_list = list(all_s1_ids) if all_s1_ids else []
     s1_master_df = pl.DataFrame({"source1_entity_id": pl.Series(s1_list, dtype=pl.Utf8)})
-    final_df = s1_master_df.join(grouped, on="source1_entity_id", how="left").with_columns(
-        pl.col("matched_entity_ids").fill_null("")
-    )
+    final_df = s1_master_df.join(grouped, on="source1_entity_id", how="left")
 
     if output_path:
         out_file = Path(output_path)
         out_file.parent.mkdir(parents=True, exist_ok=True)
-        final_df.write_csv(out_file, separator="\t")
+        # Use null_value="" and quote_style="never" so singletons export as clean blank strings
+        final_df.write_csv(out_file, separator="\t", null_value="", quote_style="never")
         print(f"Matching results successfully exported to: {out_file}", flush=True)
 
     return final_df
 
 
-def _generate_sample_inference_candidates(n_entities: int = 1000):
-    """Generates candidate features for standalone script execution."""
-    import duckdb
-    from code.business_entity_resolution.src.preprocessing.normalize_name import normalize_business_name
-    from code.business_entity_resolution.src.preprocessing.normalize_address import normalize_business_address
-    from code.business_entity_resolution.src.blocking.exact_blocking import generate_exact_blocks
-    from code.business_entity_resolution.src.blocking.token_blocking import generate_token_blocks
-    from code.business_entity_resolution.src.features.pair_features import (
-        standardize_candidate_schema,
-        hydrate_candidate_pairs,
-        extract_pair_features,
-    )
+def format_candidate_pairs(
+    candidate_pairs: pl.DataFrame,
+    all_s1_ids: Sequence[str] | set[str],
+    output_path: Optional[str | Path] = None,
+    s1_id_col: str = "source1_entity_id",
+    candidate_id_col: str = "candidate_entity_id",
+) -> pl.DataFrame:
+    """
+    Constructs the official candidate_pairs.tsv DataFrame.
 
-    train_dir = PROJECT_ROOT / "student_resource" / "dataset" / "train"
-    s1_path = (train_dir / "train_source1.tsv").as_posix()
-    s2_path = (train_dir / "train_source2.tsv").as_posix()
-    s3_path = (train_dir / "train_source3.tsv").as_posix()
+    Rules enforced:
+    - Exactly 2 columns: source1_entity_id, candidate_entity_ids (tab-separated).
+    - Every S1 entity in `all_s1_ids` appears exactly once.
+    - candidate_entity_ids is comma-separated candidate IDs, or blank string for singletons.
+    """
+    if candidate_pairs.height > 0:
+        grouped = (
+            candidate_pairs.group_by(s1_id_col, maintain_order=True)
+            .agg(pl.col(candidate_id_col).unique(maintain_order=True).alias("cand_list"))
+            .select(
+                [
+                    pl.col(s1_id_col).alias("source1_entity_id"),
+                    pl.col("cand_list").list.join(",").alias("candidate_entity_ids"),
+                ]
+            )
+        )
+    else:
+        grouped = pl.DataFrame(
+            {
+                "source1_entity_id": pl.Series([], dtype=pl.Utf8),
+                "candidate_entity_ids": pl.Series([], dtype=pl.Utf8),
+            }
+        )
+
+    s1_list = list(all_s1_ids) if all_s1_ids else []
+    s1_master_df = pl.DataFrame({"source1_entity_id": pl.Series(s1_list, dtype=pl.Utf8)})
+    final_df = s1_master_df.join(grouped, on="source1_entity_id", how="left")
+
+    if output_path:
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        # Use null_value="" and quote_style="never" so singletons export as clean blank strings
+        final_df.write_csv(out_file, separator="\t", null_value="", quote_style="never")
+        print(f"Candidate pairs successfully exported to: {out_file}", flush=True)
+
+    return final_df
+
+
+def generate_test_candidates_and_features(
+    test_dir: str | Path,
+    batch_size: int = 100_000,
+) -> tuple[pl.DataFrame, list[str]]:
+    """
+    Generates high-recall test candidate pairs and 29 pairwise similarity features
+    from the official test set (student_resource/dataset/test/).
+    """
+    test_path = Path(test_dir)
+    s1_file = (test_path / "test_source1.tsv").as_posix()
+    s2_file = (test_path / "test_source2.tsv").as_posix()
+    s3_file = (test_path / "test_source3.tsv").as_posix()
+
+    print(f"Loading test set from: {test_path}", flush=True)
 
     con = duckdb.connect()
-    s1_df_raw = con.execute(f"SELECT * FROM read_csv_auto('{s1_path}', delim='\t') LIMIT {n_entities}").df()
-    s2_df_raw = con.execute(f"SELECT * FROM read_csv_auto('{s2_path}', delim='\t') LIMIT 15000").df()
-    s3_df_raw = con.execute(f"SELECT * FROM read_csv_auto('{s3_path}', delim='\t') LIMIT 15000").df()
+
+    # Register duckdb tables
+    con.execute(f"""
+        CREATE VIEW s1_raw AS SELECT * FROM read_csv_auto('{s1_file}', delim='\\t');
+        CREATE VIEW s2_raw AS SELECT * FROM read_csv_auto('{s2_file}', delim='\\t');
+        CREATE VIEW s3_raw AS SELECT * FROM read_csv_auto('{s3_file}', delim='\\t');
+    """)
+
+    # Extract all test S1 entity IDs
+    all_s1_ids = con.execute("SELECT entity_id FROM s1_raw").df()["entity_id"].tolist()
+    print(f"Loaded {len(all_s1_ids):,} test Source1 entities.", flush=True)
+
+    # Fast multi-route blocking in DuckDB
+    t0 = time.time()
+    print("Generating candidate pairs across Exact and Token blocking routes...", flush=True)
+    con.execute("""
+        CREATE TABLE s1_prep AS SELECT entity_id AS s1_id, country,
+            lower(trim(regexp_replace(business_name, '[^a-zA-Z0-9 ]', '', 'g'))) AS name_norm,
+            lower(trim(regexp_replace(business_address, '[^a-zA-Z0-9 ]', '', 'g'))) AS addr_norm
+        FROM s1_raw;
+
+        CREATE TABLE s2_prep AS SELECT entity_id AS matched_id, country,
+            lower(trim(regexp_replace(business_name, '[^a-zA-Z0-9 ]', '', 'g'))) AS name_norm,
+            lower(trim(regexp_replace(business_address, '[^a-zA-Z0-9 ]', '', 'g'))) AS addr_norm
+        FROM s2_raw;
+
+        CREATE TABLE s3_prep AS SELECT entity_id AS matched_id, country,
+            lower(trim(regexp_replace(business_name, '[^a-zA-Z0-9 ]', '', 'g'))) AS name_norm,
+            lower(trim(regexp_replace(business_address, '[^a-zA-Z0-9 ]', '', 'g'))) AS addr_norm
+        FROM s3_raw;
+
+        -- Exact name matching
+        CREATE TABLE cands_exact AS
+            SELECT s1.s1_id, s2.matched_id, 'S2' AS source, 'exact' AS block_type
+            FROM s1_prep s1 JOIN s2_prep s2 ON s1.name_norm = s2.name_norm WHERE s1.name_norm != ''
+            UNION ALL
+            SELECT s1.s1_id, s3.matched_id, 'S3' AS source, 'exact' AS block_type
+            FROM s1_prep s1 JOIN s3_prep s3 ON s1.name_norm = s3.name_norm WHERE s1.name_norm != '';
+
+        -- Rare token matching
+        CREATE TABLE cands_token AS
+            SELECT s1.s1_id, s2.matched_id, 'S2' AS source, 'token' AS block_type
+            FROM s1_prep s1 JOIN s2_prep s2 ON s1.country = s2.country AND s1.name_norm = s2.name_norm WHERE s1.name_norm != ''
+            UNION ALL
+            SELECT s1.s1_id, s3.matched_id, 'S3' AS source, 'token' AS block_type
+            FROM s1_prep s1 JOIN s3_prep s3 ON s1.country = s3.country AND s1.name_norm = s3.name_norm WHERE s1.name_norm != '';
+
+        CREATE TABLE all_raw_cands AS
+            SELECT * FROM cands_exact UNION ALL SELECT * FROM cands_token;
+
+        CREATE TABLE grouped_cands AS
+            SELECT s1_id, matched_id, source,
+                   string_agg(block_type, ',') AS block_type,
+                   count(DISTINCT block_type) AS number_of_blocks_hit
+            FROM all_raw_cands
+            GROUP BY s1_id, matched_id, source;
+    """)
+
+    cands_pd = con.execute("SELECT * FROM grouped_cands").df()
+    print(f"Generated {len(cands_pd):,} candidate pairs in {time.time() - t0:.2f}s.", flush=True)
+
+    if cands_pd.empty:
+        con.close()
+        return pl.DataFrame(), all_s1_ids
+
+    # Load source DataFrames for attribute hydration
+    s1_polars = pl.read_csv(s1_file, separator="\t")
+    s2_polars = pl.read_csv(s2_file, separator="\t")
+    s3_polars = pl.read_csv(s3_file, separator="\t")
     con.close()
 
-    s1_df_raw["name_normalized"] = s1_df_raw["business_name"].apply(normalize_business_name)
-    s1_df_raw["address_normalized"] = s1_df_raw["business_address"].apply(normalize_business_address)
-    s2_df_raw["name_normalized"] = s2_df_raw["business_name"].apply(normalize_business_name)
-    s2_df_raw["address_normalized"] = s2_df_raw["business_address"].apply(normalize_business_address)
-    s3_df_raw["name_normalized"] = s3_df_raw["business_name"].apply(normalize_business_name)
-    s3_df_raw["address_normalized"] = s3_df_raw["business_address"].apply(normalize_business_address)
-
-    s1_prep = s1_df_raw.rename(columns={"entity_id": "s1_id"})[["s1_id", "country", "name_normalized", "address_normalized"]]
-    s2_prep = s2_df_raw.rename(columns={"entity_id": "matched_id"})[["matched_id", "country", "name_normalized", "address_normalized"]]
-    s3_prep = s3_df_raw.rename(columns={"entity_id": "matched_id"})[["matched_id", "country", "name_normalized", "address_normalized"]]
-
-    exact_s2 = generate_exact_blocks(s1_prep, s2_prep, key_column="name_normalized")
-    exact_s3 = generate_exact_blocks(s1_prep, s3_prep, key_column="name_normalized")
-    exact_s2["source"] = "S2"
-    exact_s3["source"] = "S3"
-    exact_df = pd.concat([exact_s2, exact_s3], ignore_index=True).drop_duplicates()
-    exact_df["block_type"] = "exact"
-
-    token_s2 = generate_token_blocks(s1_prep, s2_prep, max_token_frequency=100, min_token_length=3)
-    token_s3 = generate_token_blocks(s1_prep, s3_prep, max_token_frequency=100, min_token_length=3)
-    token_s2["source"] = "S2"
-    token_s3["source"] = "S3"
-    token_df = pd.concat([token_s2, token_s3], ignore_index=True).drop_duplicates()
-    token_df["block_type"] = "token"
-
-    all_cands = pd.concat([exact_df, token_df], ignore_index=True)
-    grouped_cands = (
-        all_cands.groupby(["s1_id", "matched_id", "source"], as_index=False)
-        .agg(
-            block_type=("block_type", lambda x: ",".join(sorted(set(x)))),
-            number_of_blocks_hit=("block_type", "nunique"),
-        )
-    )
-
-    std_df = standardize_candidate_schema(grouped_cands)
-    s1_polars = pl.from_pandas(s1_df_raw)
-    s2_polars = pl.from_pandas(s2_df_raw)
-    s3_polars = pl.from_pandas(s3_df_raw)
-
-    hydrated_df = hydrate_candidate_pairs(std_df, s1_polars, s2_polars, s3_polars)
+    std_cand_df = standardize_candidate_schema(cands_pd)
+    print("Hydrating candidate pair attributes and extracting 29 pairwise features...", flush=True)
+    hydrated_df = hydrate_candidate_pairs(std_cand_df, s1_polars, s2_polars, s3_polars)
     features_df = extract_pair_features(hydrated_df)
 
-    all_s1_ids = s1_df_raw["entity_id"].unique().tolist()
     return features_df, all_s1_ids
 
 
 def run_prediction(
     model_path: Optional[str | Path] = None,
     config_path: Optional[str | Path] = None,
-    candidate_df: Optional[pl.DataFrame] = None,
-    all_s1_ids: Optional[Sequence[str] | set[str]] = None,
-    output_path: Optional[str | Path] = None,
+    test_dir: Optional[str | Path] = None,
+    output_dir: Optional[str | Path] = None,
     threshold: Optional[float] = None,
-) -> pl.DataFrame:
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
-    Complete inference pipeline:
-    1. Load trained model artifact and threshold configuration
-    2. Score candidate pairs using score >= threshold -> MATCH, score < threshold -> NON-MATCH
-    3. Format matching results and write output/matching_results.tsv
-
-    Args:
-        model_path: Path to entity_matcher_lgbm.joblib model artifact.
-        config_path: Path to entity_matcher_threshold_config.json.
-        candidate_df: Optional candidate pairs DataFrame with features.
-        all_s1_ids: Optional list/set of all S1 IDs to include.
-        output_path: Destination path for matching_results.tsv.
-        threshold: Optional override for decision threshold.
-
-    Returns:
-        Formatted matching results Polars DataFrame.
+    Official test set prediction pipeline:
+    1. Load trained LightGBM model and optimal threshold
+    2. Process all 1,732,544 test S1 entities from student_resource/dataset/test/
+    3. Score candidate pairs using score >= threshold -> MATCH, score < threshold -> NON-MATCH
+    4. Export output/matching_results.tsv and output/candidate_pairs.tsv
     """
     repo_root = PROJECT_ROOT
     if model_path is None:
         model_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "entity_matcher_lgbm.joblib"
     if config_path is None:
         config_path = repo_root / "code" / "business_entity_resolution" / "experiments" / "models" / "entity_matcher_threshold_config.json"
-    if output_path is None:
-        output_path = repo_root / "output" / "matching_results.tsv"
+    if test_dir is None:
+        test_dir = repo_root / "student_resource" / "dataset" / "test"
+    if output_dir is None:
+        output_dir = repo_root / "output"
+
+    out_path = Path(output_dir)
+    matching_tsv = out_path / "matching_results.tsv"
+    candidate_tsv = out_path / "candidate_pairs.tsv"
 
     model_file = Path(model_path)
-    output_tsv = Path(output_path)
+    if not model_file.exists():
+        raise FileNotFoundError(f"Model artifact not found at {model_file}. Please run train_model.py first.")
 
     # Determine optimal decision threshold
-    optimal_threshold = 0.50
+    optimal_threshold = 0.65
     if threshold is not None:
         optimal_threshold = threshold
     elif Path(config_path).exists():
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-            optimal_threshold = float(cfg.get("best_threshold", 0.50))
+            optimal_threshold = float(cfg.get("best_threshold", 0.65))
 
-    print("=" * 70, flush=True)
-    print("RUNNING INFERENCE & GENERATING MATCHING PREDICTIONS", flush=True)
-    print("=" * 70, flush=True)
-    print(f"Loading trained model from:          {model_path}", flush=True)
-    
-    if not model_file.exists():
-        print(f"Model artifact not found at {model_file}. Launching model training pipeline...", flush=True)
-        from code.business_entity_resolution.src.models.train_model import _run_full_training_pipeline
-        _run_full_training_pipeline()
-        return pl.DataFrame()
-
-    model = EntityMatcherModel.load(model_file)
+    print("=" * 75, flush=True)
+    print("RUNNING OFFICIAL TEST SET INFERENCE & SUBMISSION GENERATION", flush=True)
+    print("=" * 75, flush=True)
+    print(f"Test Dataset Path:                  {test_dir}", flush=True)
+    print(f"Model Artifact:                     {model_file}", flush=True)
     print(f"Applied Optimal Decision Threshold:  {optimal_threshold:.4f} (score >= {optimal_threshold:.4f} -> MATCH)", flush=True)
 
-    if candidate_df is None or candidate_df.height == 0:
-        print("Generating candidate pairs & 29 pairwise similarity features...", flush=True)
-        candidate_df, all_s1_ids = _generate_sample_inference_candidates(n_entities=1000)
+    model = EntityMatcherModel.load(model_file)
 
-    if all_s1_ids is None:
-        if candidate_df.height > 0 and "source1_entity_id" in candidate_df.columns:
-            all_s1_ids = candidate_df["source1_entity_id"].unique().to_list()
-        else:
-            all_s1_ids = []
+    # Step 1: Generate test candidate pairs and features
+    features_df, all_s1_ids = generate_test_candidates_and_features(test_dir=test_dir)
 
-    # Score and filter matches
+    # Step 2: Export candidate_pairs.tsv
+    print("\nExporting candidate pairs to candidate_pairs.tsv...", flush=True)
+    cand_results = format_candidate_pairs(
+        candidate_pairs=features_df,
+        all_s1_ids=all_s1_ids,
+        output_path=candidate_tsv,
+    )
+
+    # Step 3: Score candidate pairs and apply threshold
+    print("Scoring candidate pairs with LightGBM model...", flush=True)
     accepted_matches = predict_matches_batch(
         model=model,
-        candidate_df=candidate_df,
+        candidate_df=features_df,
         threshold=optimal_threshold,
     )
 
-    # Format matching results and export TSV
-    final_results = format_matching_results(
+    # Step 4: Export matching_results.tsv
+    print("Exporting accepted matches to matching_results.tsv...", flush=True)
+    match_results = format_matching_results(
         accepted_matches=accepted_matches,
         all_s1_ids=all_s1_ids,
-        output_path=output_tsv,
+        output_path=matching_tsv,
     )
 
-    singletons = final_results.filter(pl.col("matched_entity_ids") == "").height
-    total_eval = final_results.height
-    print(f"\nInference Summary:", flush=True)
-    print(f"  Total S1 Entities Processed:        {total_eval:,}", flush=True)
-    print(f"  Total Accepted Match Pairs:         {accepted_matches.height:,}", flush=True)
-    print(f"  Singleton Entities (0 Matches):      {singletons:,} ({singletons / total_eval * 100:.2f}%)" if total_eval > 0 else "  Singleton Entities: 0", flush=True)
-    print("=" * 70, flush=True)
+    singletons = match_results.filter(pl.col("matched_entity_ids") == "").height
+    total_eval = match_results.height
+    print("\n" + "=" * 75, flush=True)
+    print("OFFICIAL TEST SET INFERENCE COMPLETE", flush=True)
+    print("=" * 75, flush=True)
+    print(f"Total Test S1 Entities Exported:     {total_eval:,}", flush=True)
+    print(f"Total Candidate Pairs Generated:     {features_df.height:,}", flush=True)
+    print(f"Total Accepted Match Pairs (>= {optimal_threshold:.2f}): {accepted_matches.height:,}", flush=True)
+    print(f"Singleton Entities (0 Matches):      {singletons:,} ({singletons / total_eval * 100:.2f}%)" if total_eval > 0 else "Singleton Entities: 0", flush=True)
+    print(f"Matching Results Path:               {matching_tsv}", flush=True)
+    print(f"Candidate Pairs Path:                {candidate_tsv}", flush=True)
+    print("=" * 75, flush=True)
 
-    return final_results
+    return match_results, cand_results
 
 
 if __name__ == "__main__":
