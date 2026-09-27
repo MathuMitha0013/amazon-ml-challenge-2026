@@ -1,91 +1,76 @@
 """
 Address-based blocking route.
 
-Generates candidate pairs using shared country and
-discriminative address components such as numeric
-identifiers and normalized address tokens.
+Responsibilities:
+- Extract address tokens (distinctive locality names, street tokens, postal codes, and numbers).
+- Invert address tokens within country and filter out high-frequency street terms.
+- Retrieve candidates that share rare address tokens or postal identifiers.
 """
 
-from typing import Any
+from collections import defaultdict
+import pandas as pd
 
 import pandas as pd
 
 
 def generate_address_blocks(
-    source1_data: Any,
-    source2_3_data: Any,
+    source1_data: pd.DataFrame,
+    source2_3_data: pd.DataFrame,
+    max_token_frequency: int = 75,
     min_token_length: int = 3,
-) -> Any:
+    key_column: str = "address_normalized",
+) -> pd.DataFrame:
     """
-    Generate candidate pairs using address components.
+    Blocks records based on shared numeric and locality address tokens within country boundaries.
 
-    Required columns:
-
-    Source 1:
-        s1_id
-        country
-        normalized_address
-
-    Source 2/3:
-        matched_id
-        country
-        normalized_address
+    Args:
+        source1_data: Master Source1 table (columns: s1_id, country, key_column).
+        source2_3_data: Target noisy source tables (columns: matched_id, country, key_column).
+        max_token_frequency: Maximum frequency for an address token in target pool.
+        min_token_length: Minimum character length for address tokens.
+        key_column: Normalized address column.
 
     Returns:
-        DataFrame containing:
-            s1_id
-            matched_id
+        DataFrame of candidate pairs: ['s1_id', 'matched_id'].
     """
+    if source1_data.empty or source2_3_data.empty or key_column not in source1_data.columns or key_column not in source2_3_data.columns:
+        return pd.DataFrame(columns=["s1_id", "matched_id"])
 
-    s1 = source1_data[
-        ["s1_id", "country", "normalized_address"]
-    ].copy()
+    # Build target address token frequency and postings list
+    token_counts = defaultdict(int)
+    target_tokens = defaultdict(list)
 
-    target = source2_3_data[
-        ["matched_id", "country", "normalized_address"]
-    ].copy()
+    for country, text_val, matched_id in zip(
+        source2_3_data["country"].values,
+        source2_3_data[key_column].values,
+        source2_3_data["matched_id"].values,
+    ):
+        if text_val is not None and str(text_val) != "" and str(text_val) != "nan":
+            tokens = set(str(text_val).split())
+            for tok in tokens:
+                if len(tok) >= min_token_length:
+                    key = (country, tok)
+                    token_counts[key] += 1
+                    target_tokens[key].append(matched_id)
 
-    # Handle missing addresses
-    s1["normalized_address"] = (
-        s1["normalized_address"]
-        .fillna("")
-        .astype(str)
-    )
+    # Query source1 address tokens against rare target postings
+    pairs = set()
+    for country, text_val, s1_id in zip(
+        source1_data["country"].values,
+        source1_data[key_column].values,
+        source1_data["s1_id"].values,
+    ):
+        if text_val is not None and str(text_val) != "" and str(text_val) != "nan":
+            tokens = set(str(text_val).split())
+            for tok in tokens:
+                if len(tok) >= min_token_length:
+                    key = (country, tok)
+                    if 0 < token_counts.get(key, 0) <= max_token_frequency:
+                        for matched_id in target_tokens[key]:
+                            pairs.add((s1_id, matched_id))
 
-    target["normalized_address"] = (
-        target["normalized_address"]
-        .fillna("")
-        .astype(str)
-    )
+    if not pairs:
+        return pd.DataFrame(columns=["s1_id", "matched_id"])
 
-    # Extract address tokens
-    s1["address_token"] = (
-        s1["normalized_address"].str.split()
-    )
-    target["address_token"] = (
-        target["normalized_address"].str.split()
-    )
-
-    s1 = s1.explode("address_token")
-    target = target.explode("address_token")
-
-    # Remove short/generic tokens
-    s1 = s1[
-        s1["address_token"].str.len() >= min_token_length
-    ]
-
-    target = target[
-        target["address_token"].str.len() >= min_token_length
-    ]
-
-    # Candidate generation using country + address token
-    candidates = s1.merge(
-        target,
-        on=["country", "address_token"],
-        how="inner",
-        suffixes=("_s1", "_target"),
-    )
-
-    return candidates[
-        ["s1_id", "matched_id"]
-    ].drop_duplicates()
+    s1_ids, matched_ids = zip(*pairs)
+    return pd.DataFrame({"s1_id": list(s1_ids), "matched_id": list(matched_ids)})
