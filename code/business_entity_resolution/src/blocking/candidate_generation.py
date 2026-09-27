@@ -1,175 +1,134 @@
 """
-Multi-route candidate generation.
+Multi-route blocking union and high-recall candidate pool generator.
 
-Current implemented routes:
-    - exact
-    - token
-
-The candidate generator combines candidates from Source 2 and Source 3,
-deduplicates pairs, and records which blocking routes discovered each pair.
+Responsibilities:
+- Combine candidate pairs across all blocking routes (Exact, Token, Address, N-Gram).
+- Deduplicate candidate pairs and track route provenance (which routes discovered each pair).
+- Calculate number_of_blocks_hit for downstream ML matchers.
+- Support configurable subsets of routes.
 """
 
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Optional, Union
 import pandas as pd
 
-from .exact_blocking import generate_exact_blocks
-from .token_blocking import generate_token_blocks
+from src.blocking.exact_blocking import generate_exact_blocks
+from src.blocking.token_blocking import generate_token_blocks
+from src.blocking.address_blocking import generate_address_blocks
+from src.blocking.ngram_blocking import generate_ngram_blocks
 
 
-def _load_tsv(path: str | Path) -> pd.DataFrame:
-    """Load a TSV file into a DataFrame."""
-    return pd.read_csv(path, sep="\t", dtype=str)
-
-
-def _prepare_target(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert Source 2/3 schema to the common target schema."""
-    return df.rename(
-        columns={"entity_id": "matched_id"}
-    )
-
-
-def _run_route(
-    source1: pd.DataFrame,
-    target: pd.DataFrame,
-    route: str,
+def combine_candidate_routes(
+    route_dfs: dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
-    """Run one blocking route."""
-    route = route.lower()
+    """
+    Merges candidate pair DataFrames across multiple blocking routes via UNION.
+    Tracks block_type provenance and number_of_blocks_hit.
 
-    if route == "exact":
-        result = generate_exact_blocks(source1, target)
+    Args:
+        route_dfs: Dictionary mapping route name (e.g. 'exact', 'token', 'address', 'ngram')
+                   to DataFrame of ['s1_id', 'matched_id'].
 
-    elif route == "token":
-        result = generate_token_blocks(
-            source1,
-            target,
-            max_token_frequency=100,
-            min_token_length=3,
-        )
+    Returns:
+        Deduplicated candidate DataFrame with columns:
+        ['s1_id', 'matched_id', 'block_type', 'number_of_blocks_hit']
+    """
+    tagged_records = []
+    for route_name, df in route_dfs.items():
+        if df is not None and not df.empty:
+            sub = df[["s1_id", "matched_id"]].drop_duplicates().copy()
+            sub["route"] = route_name
+            tagged_records.append(sub)
 
-    else:
-        raise ValueError(
-            f"Unsupported route '{route}'. "
-            f"Currently supported routes: exact, token"
-        )
+    if not tagged_records:
+        return pd.DataFrame(columns=["s1_id", "matched_id", "block_type", "number_of_blocks_hit"])
 
-    result = result[
-        ["s1_id", "matched_id"]
-    ].drop_duplicates()
+    all_tagged = pd.concat(tagged_records, ignore_index=True)
 
-    result["block_type"] = route
+    # Group by (s1_id, matched_id) to aggregate block types and hits
+    grouped = all_tagged.groupby(["s1_id", "matched_id"]).agg(
+        block_type=("route", lambda x: "+".join(sorted(set(x)))),
+        number_of_blocks_hit=("route", "nunique"),
+    ).reset_index()
 
-    return result
+    return grouped
+
+
+def generate_candidate_pairs_from_frames(
+    s1_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+    routes: Optional[list[str]] = None,
+    name_col: str = "name_normalized",
+    addr_col: str = "address_normalized",
+) -> pd.DataFrame:
+    """
+    Executes configured blocking routes and merges candidate pools via UNION.
+
+    Args:
+        s1_df: Source1 records with s1_id, country, name_normalized, address_normalized.
+        target_df: Target records with matched_id, country, name_normalized, address_normalized.
+        routes: List of active routes ('exact', 'token', 'address', 'ngram').
+        name_col: Column name for normalized business name.
+        addr_col: Column name for normalized address.
+
+    Returns:
+        Unified candidate DataFrame.
+    """
+    if routes is None:
+        routes = ["exact", "token", "address", "ngram"]
+
+    route_dfs = {}
+
+    if "exact" in routes and name_col in s1_df.columns and name_col in target_df.columns:
+        route_dfs["exact"] = generate_exact_blocks(s1_df, target_df, key_column=name_col)
+
+    if "token" in routes and name_col in s1_df.columns and name_col in target_df.columns:
+        route_dfs["token"] = generate_token_blocks(s1_df, target_df, max_token_frequency=100, min_token_length=3, key_column=name_col)
+
+    if "address" in routes and addr_col in s1_df.columns and addr_col in target_df.columns:
+        route_dfs["address"] = generate_address_blocks(s1_df, target_df, max_token_frequency=75, min_token_length=3, key_column=addr_col)
+
+    if "ngram" in routes and name_col in s1_df.columns and name_col in target_df.columns:
+        route_dfs["ngram"] = generate_ngram_blocks(s1_df, target_df, ngram_size=3, max_ngram_frequency=50, key_column=name_col)
+
+    return combine_candidate_routes(route_dfs)
 
 
 def generate_candidate_pairs(
-    source1_path: str | Path,
-    source2_path: str | Path,
-    source3_path: str | Path,
+    source1_path: Union[str, Path, pd.DataFrame],
+    source2_path: Union[str, Path, pd.DataFrame],
+    source3_path: Optional[Union[str, Path, pd.DataFrame]] = None,
     routes: Optional[list[str]] = None,
-) -> Any:
+) -> pd.DataFrame:
     """
-    Generate candidate pairs across Source 2 and Source 3.
+    Executes all configured blocking routes and merges candidate pools via UNION.
 
     Args:
-        source1_path: Path to Source 1 TSV.
-        source2_path: Path to Source 2 TSV.
-        source3_path: Path to Source 3 TSV.
-        routes: Blocking routes to run.
-                Default: ["exact", "token"].
+        source1_path: Path or DataFrame of Source1 dataset.
+        source2_path: Path or DataFrame of Source2 dataset.
+        source3_path: Optional path or DataFrame of Source3 dataset.
+        routes: List of active routes to run (default: ['exact', 'token', 'address', 'ngram']).
 
     Returns:
-        DataFrame with:
-            s1_id
-            matched_id
-            block_type
-            number_of_blocks_hit
-
-    Notes:
-        Address and n-gram routes are intentionally not enabled yet.
+        Deduplicated candidate pair table with route hit counts.
     """
+    if isinstance(source1_path, (str, Path)):
+        s1_df = pd.read_csv(source1_path, sep="\t")
+    else:
+        s1_df = source1_path.copy()
 
-    if routes is None:
-        routes = ["exact", "token"]
+    if isinstance(source2_path, (str, Path)):
+        s2_df = pd.read_csv(source2_path, sep="\t")
+    else:
+        s2_df = source2_path.copy()
 
-    source1 = _load_tsv(source1_path)
-    source2 = _prepare_target(_load_tsv(source2_path))
-    source3 = _prepare_target(_load_tsv(source3_path))
+    if source3_path is not None:
+        if isinstance(source3_path, (str, Path)):
+            s3_df = pd.read_csv(source3_path, sep="\t")
+        else:
+            s3_df = source3_path.copy()
+        target_df = pd.concat([s2_df, s3_df], ignore_index=True)
+    else:
+        target_df = s2_df
 
-    # The normalization pipeline should provide this column.
-    required_s1 = {"entity_id", "country", "name_normalized"}
-
-    if not required_s1.issubset(source1.columns):
-        missing = required_s1 - set(source1.columns)
-        raise ValueError(
-            f"Source 1 is missing required columns: {sorted(missing)}"
-        )
-
-    source1 = source1.rename(columns={"entity_id": "s1_id"})
-
-    required_target = {
-        "matched_id",
-        "country",
-        "name_normalized",
-    }
-
-    for name, df in [("Source 2", source2), ("Source 3", source3)]:
-        if not required_target.issubset(df.columns):
-            missing = required_target - set(df.columns)
-            raise ValueError(
-                f"{name} is missing required columns: {sorted(missing)}"
-            )
-
-    all_results = []
-
-    # Source 2
-    for route in routes:
-        result = _run_route(source1, source2, route)
-        result["source"] = "S2"
-        all_results.append(result)
-
-    # Source 3
-    for route in routes:
-        result = _run_route(source1, source3, route)
-        result["source"] = "S3"
-        all_results.append(result)
-
-    if not all_results:
-        return pd.DataFrame(
-            columns=[
-                "s1_id",
-                "matched_id",
-                "source",
-                "block_type",
-                "number_of_blocks_hit",
-            ]
-        )
-
-    candidates = pd.concat(
-        all_results,
-        ignore_index=True,
-    )
-
-    # A pair may be discovered by multiple blocking routes.
-    # Combine route names and count the number of routes.
-    final = (
-        candidates
-        .groupby(
-            ["s1_id", "matched_id", "source"],
-            as_index=False,
-        )
-        .agg(
-            block_type=(
-                "block_type",
-                lambda x: ",".join(sorted(set(x))),
-            ),
-            number_of_blocks_hit=(
-                "block_type",
-                "nunique",
-            ),
-        )
-    )
-
-    return final
+    return generate_candidate_pairs_from_frames(s1_df, target_df, routes=routes)

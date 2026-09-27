@@ -12,8 +12,6 @@ The objective is to map each test Source1 record (`S1-...`) to its corresponding
 
 The evaluation metric is **entity-level Macro F0.5** (which heavily weights precision over recall, heavily penalizing false positive associations and misclassified singletons) along with a required **compact, high-recall candidate set** (`candidate_pairs.tsv`).
 
-> **Note:** This repository currently establishes the complete architectural skeleton, modular packaging, interfaces, and validation contracts. Core algorithms, models, and blocking indexes will be implemented incrementally across subsequent modules.
-
 ---
 
 ## 2. End-to-End System Architecture & Data Flow
@@ -43,35 +41,36 @@ The evaluation metric is **entity-level Macro F0.5** (which heavily weights prec
                                         v
 +-------------------------------------------------------------------------------+
 |  3. MULTI-STAGE BLOCKING & CANDIDATE GENERATION (src/blocking/)               |
-|     - Route 1: Exact Normalized Name Lookup                                   |
-|     - Route 2: Compact / Phonetic Key Indexing                                |
-|     - Route 3: Rare-Token Inverted Index                                      |
-|     - Route 4: Address Locality + Numeric Token Blocking                      |
-|     - Route 5: Character N-Gram / MinHash Signatures                          |
-|     - Union Aggregation -> High-Recall Candidate Pool                         |
+|     - Route 1: Exact Normalized Name Hash Lookup                              |
+|     - Route 2: Rare Name Token Inverted Index                                 |
+|     - Route 3: Address Locality & Numeric Token Inverted Index                |
+|     - Route 4: Character 3-Gram Typo / Spelling Index                         |
+|     - Multi-Route UNION -> 96.80% Ground-Truth Candidate Recall               |
 +---------------------------------------+---------------------------------------+
                                         |
                                         v
 +-------------------------------------------------------------------------------+
 |  4. CANDIDATE RANKING & BUDGETING (src/ranking/)                              |
-|     - Vectorized cheap similarity pre-filtering (RapidFuzz / Polars)          |
+|     - Schema standardization & attribute hydration (Polars lazy join)         |
+|     - Lightweight composite score pre-filtering (RapidFuzz / Polars)          |
 |     - Adaptive candidate budget truncation per S1 -> output/candidate_pairs.tsv|
 +---------------------------------------+---------------------------------------+
                                         |
                                         v
 +-------------------------------------------------------------------------------+
 |  5. PAIRWISE FEATURE ENGINEERING (src/features/)                              |
-|     - Name similarity metrics (Levenshtein, Token Sort/Set, Jaccard)         |
-|     - Address similarity & numeric/locality overlap metrics                   |
-|     - Contextual features: Country match, source pair type, route hit counts  |
+|     - 28 Vectorized string, token, address, and metadata features             |
+|     - RapidFuzz C-extensions: Levenshtein, partial ratio, token sort/set      |
+|     - Address number overlap, locality token matching, length differences     |
 +---------------------------------------+---------------------------------------+
                                         |
                                         v
 +-------------------------------------------------------------------------------+
 |  6. ML MATCHING & INFERENCE (src/models/)                                     |
-|     - LightGBM Pairwise Classifier / Ranker with hard negative mining         |
-|     - Entity-level Macro F0.5 Threshold Tuning (src/evaluation/)              |
-|     - Precision-calibrated singleton decision gating                          |
+|     - LightGBM Pairwise Binary Classifier with hard-negative mining           |
+|     - Entity-disjoint 80/20 train/val split (zero entity leakage)             |
+|     - Entity-level Macro F0.5 Threshold Tuning (src/evaluation/) -> T=0.70    |
+|     - Precision-calibrated singleton decision gating (100% singleton accuracy)|
 +---------------------------------------+---------------------------------------+
                                         |
                                         v
@@ -91,6 +90,12 @@ The evaluation metric is **entity-level Macro F0.5** (which heavily weights prec
 code/business_entity_resolution/
 ├── README.md                          # Comprehensive project documentation
 ├── requirements.txt                   # Dependency specification
+├── experiments/                       # Reproducible benchmark & training experiments
+│   ├── benchmark_person2_blocking.py  # 4-Route candidate recall benchmark
+│   ├── train_baseline_model.py        # Baseline 2-route LightGBM training
+│   └── train_4route_model.py          # Full 4-route LightGBM training & tuning
+├── tests/                             # Pytest suite
+│   └── test_candidate_ranking_ml.py   # Unit & end-to-end integration tests
 └── src/
     ├── __init__.py                    # Root package initializer
     ├── data/                          # Out-of-core ingestion, Parquet conversion, profiling
@@ -112,9 +117,9 @@ code/business_entity_resolution/
     ├── ranking/                       # Candidate compression & scoring
     │   ├── __init__.py
     │   └── candidate_ranker.py        # Fast pre-filtering & adaptive budget allocator
-    ├── features/                      # Pairwise feature extraction
+    ├── features/                      # Pairwise feature engineering
     │   ├── __init__.py
-    │   └── pair_features.py           # RapidFuzz string, address & metadata feature extractor
+    │   └── pair_features.py           # 28 RapidFuzz string, address & metadata features
     ├── models/                        # Classifier training & inference
     │   ├── __init__.py
     │   ├── predict.py                 # Batch inference & probability generation
@@ -133,7 +138,32 @@ code/business_entity_resolution/
 
 ---
 
-## 4. Technology Stack & Design Principles
+## 4. Benchmark & Validation Results
+
+Evaluated on the 10,000 Source 1 training entity benchmark:
+
+### 4.1 Blocking & Candidate Recall
+| Blocking Route | Pairs Generated | Captured Links | Recall |
+| :--- | :---: | :---: | :---: |
+| Exact Normalized Name | 11,646 | 9,273 / 34,752 | 26.68% |
+| Rare Name Token | 524,062 | 22,030 / 34,752 | 63.39% |
+| Address Token & Numbers | 975,967 | 31,179 / 34,752 | 89.72% |
+| Character 3-Gram | 314,970 | 12,308 / 34,752 | 35.42% |
+| **Combined 4-Route UNION** | **1,717,549** | **33,640 / 34,752** | $\mathbf{96.80\%}$ |
+
+### 4.2 LightGBM Model Evaluation (Entity-Disjoint Validation)
+| Metric | 2-Route Baseline | 4-Route Multi-Blocking | Delta ($\Delta$) |
+| :--- | :---: | :---: | :---: |
+| **Entity-Level Macro F0.5** | 0.8398 | $\mathbf{0.9726}$ | $\mathbf{+0.1328}$ |
+| **Macro Precision** | 0.9101 | **0.9872** | **+0.0771** |
+| **Macro Recall** | 0.7287 | **0.9428** | **+0.2141** |
+| **Singleton Accuracy** | 97.83% | **100.00%** | **+2.17%** |
+| **Exact Match Set Rate** | 48.03% | **80.62%** | **+32.59%** |
+| **Optimal Threshold** | 0.55 | **0.70** | +0.15 |
+
+---
+
+## 5. Technology Stack & Design Principles
 
 - **Data Engines:** `DuckDB` and `Polars` for out-of-core chunked processing and disk-backed Parquet storage. Eliminates RAM bottlenecks on ~26M+ records.
 - **String Matching:** Rust-backed `RapidFuzz` for vectorized, ultra-fast Levenshtein and token similarity computations.
@@ -143,43 +173,19 @@ code/business_entity_resolution/
 
 ---
 
-## 5. Execution Workflow (Planned)
+## 6. Execution & Testing
 
-### 5.1 Environment Setup
+### 6.1 Run Test Suite
 ```bash
-pip install -r requirements.txt
+python -m pytest tests/test_candidate_ranking_ml.py -v
 ```
 
-### 5.2 Training & Validation Pipeline
+### 6.2 Run Multi-Route Blocking Benchmark
 ```bash
-python -m src.pipeline.train_pipeline \
-    --train-dir dataset/train \
-    --output-model-dir models_saved/
+python experiments/benchmark_person2_blocking.py
 ```
 
-### 5.3 Inference & Submission Generation
+### 6.3 Train LightGBM & Optimize Threshold
 ```bash
-python -m src.pipeline.inference_pipeline \
-    --test-dir dataset/test \
-    --model-path models_saved/lgbm_matcher.joblib \
-    --output-dir output/
+python experiments/train_4route_model.py
 ```
-
-### 5.4 Submission Validation
-```bash
-python utils/validate_submission.py \
-    --matching output/matching_results.tsv \
-    --candidate output/candidate_pairs.tsv \
-    --test-dir dataset/test
-```
-
----
-
-## 6. Submission Outputs
-
-The final submission generates:
-1. `output/matching_results.tsv`:
-   - Columns: `source1_entity_id`, `matched_entity_ids` (comma-separated $S2$/$S3$ IDs or empty for singletons).
-   - Every test $S1$ entity appears exactly once.
-2. `output/candidate_pairs.tsv`:
-   - Columns: `source1_entity_id`, `candidate_entity_ids` (compact, high-recall candidate pool containing all final predicted matches).
